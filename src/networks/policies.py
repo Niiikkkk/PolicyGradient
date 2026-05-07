@@ -60,11 +60,11 @@ class MLPPolicy(nn.Module):
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         """Takes a single observation (as a numpy array) and returns a single action (as a numpy array)."""
         # TODO: implement get_action
-        action = None
-
+        action_distribution = self.forward(ptu.from_numpy(obs))
+        action = action_distribution.sample().cpu().numpy()
         return action
 
-    def forward(self, obs: torch.FloatTensor):
+    def forward(self, obs: torch.FloatTensor) -> torch.distributions.Distribution:
         """
         This function defines the forward pass of the network.  You can return anything you want, but you should be
         able to differentiate through it. For example, you can return a torch.FloatTensor. You can also return more
@@ -72,10 +72,19 @@ class MLPPolicy(nn.Module):
         """
         if self.discrete:
             # TODO: define the forward pass for a policy with a discrete action space.
-            pass
+            action_space = self.logits_net(obs)
+            #Create a distribution with that logits (those are not probabilities),
+            # A Categorical has sample() method that return a integer {0..K-1} where K
+            # is the number of "classes"
+            distribution = D.Categorical(logits=action_space)
+            return distribution
+
         else:
             # TODO: define the forward pass for a policy with a continuous action space.
-            pass
+            mean = self.mean_net(obs)
+            std = torch.exp(self.logstd)
+            distribution = D.Normal(mean, std)
+            return distribution
 
     def update(self, obs: np.ndarray, actions: np.ndarray, *args, **kwargs) -> dict:
         """
@@ -99,11 +108,25 @@ class MLPPolicyPG(MLPPolicy):
         actions = ptu.from_numpy(actions)
         advantages = ptu.from_numpy(advantages)
 
+        #This is the distribution pi(a|s)
+        output_distribution = self.forward(obs)
+
         # TODO: compute the policy gradient actor loss
-        loss = None
+        #The log_prob computes the probability that a specific action a occurs under
+        # a distribution pi(a|s)
+        if self.discrete:
+            log_prob = output_distribution.log_prob(actions)
+        else:
+            log_prob = output_distribution.log_prob(actions).sum(dim=1)
+
+
+        loss = -(log_prob*advantages).mean()
+
+        self.optimizer.zero_grad()
+        loss.backward()
 
         # TODO: perform an optimizer step
-        pass
+        self.optimizer.step()
 
         return {
             "Actor Loss": loss.item(),
